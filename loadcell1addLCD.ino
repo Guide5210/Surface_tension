@@ -4,18 +4,28 @@
 #endif
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-//still use full 7/20/2025
+//still use full 7/20/2025 && 8/4/2025
 
 const int HX711_dout = 4;  //mcu > HX711 dout pin
 const int HX711_sck = 5;   //mcu > HX711 sck pin
+const int buttonPin = 2;
+const int ledPin = 13;
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
 HX711_ADC LoadCell(HX711_dout, HX711_sck);
 
 const int calVal_eepromAdress = 0;
 unsigned long t = 0;
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;
+
+int buttonState;
+int lastButtonState = HIGH;
+bool commandSent = false;
 
 void setup() {
+  pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(ledPin, OUTPUT);
   Serial.begin(9600);
   delay(10);
   Serial.println();
@@ -50,11 +60,14 @@ void setup() {
   lcd.setCursor(0, 0);
   lcd.print("Loadcell Ready");
   delay(1000);
+
+  Serial.println("Ready to receive 't' command from button...");
 }
 
 void loop() {
   static boolean newDataReady = 0;
   const int serialPrintInterval = 0;  //increase value to slow down serial print activity
+  int reading = digitalRead(buttonPin);
 
   // check for new data/start next conversion:
   if (LoadCell.update()) newDataReady = true;
@@ -71,16 +84,45 @@ void loop() {
     }
   }
 
-  // receive command from serial terminal, send 't' to initiate tare operation:
-  if (Serial.available() > 0) {
-    char inByte = Serial.read();
-    if (inByte == 't') LoadCell.tareNoDelay();
-  }
-
-  // check if last tare operation is complete:
   if (LoadCell.getTareStatus() == true) {
     Serial.println("Tare complete");
+    lcd.setCursor(0, 0);
+    lcd.print("Tare Complete!     ");
+    delay(2000);
+    LoadCell.getTareStatus() == false;
   }
+
+  if (newDataReady) {
+    if (millis() > t + serialPrintInterval) {
+      float weight = LoadCell.getData();
+      Serial.print("Load_cell output val: ");
+      Serial.println(weight);
+      newDataReady = 0;
+      t = millis();
+    }
+  }
+
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    if (reading != buttonState) {
+      buttonState = reading;
+      if (buttonState == LOW) {
+        // เมื่อมีการกดสวิตช์ ให้เรียกคำสั่ง Tare โดยตรง
+        LoadCell.tareNoDelay();
+
+        digitalWrite(ledPin, HIGH);  // เปิด LED เพื่อแสดงว่ามีการสั่ง Tare
+        Serial.println("Button PRESSED: 't' command sent. Tare initiated.");
+      } else {
+        // เมื่อมีการปล่อยสวิตช์
+        digitalWrite(ledPin, LOW);  // ปิด LED
+        Serial.println("Button RELEASED.");
+      }
+    }
+  }
+  lastButtonState = reading;
+
   float weight = LoadCell.getData();  // อ่านค่าน้ำหนัก
   lcd.setCursor(0, 0);
   lcd.print("                    ");  // เคลียร์ทั้งแถว (20 ช่อง)
